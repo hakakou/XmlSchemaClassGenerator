@@ -2,6 +2,7 @@
 using System.CodeDom;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
@@ -107,16 +108,24 @@ internal class ModelBuilder
             CreateUniqueTypeNames();
     }
 
+    // Example strings: /v1.0, :v2.3, .v3.4.0
+    private static readonly Regex NamespaceVersionRegex = 
+        new Regex(@"(?:/|:|\.)(v\d+(?:\.\d+)+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private void CreateUniqueTypeNames()
     {
         foreach (var types in Namespaces.Values.SelectMany(n => n.Types.Values).GroupBy(t => t.Name))
         {
-            var i = 2;
-
-            foreach (var t in types.Skip(1))
+            foreach (var t in types)
             {
-                t.Name += $"_{i}";
-                i++;
+                var namespaceKey = Namespaces.First(n => n.Value.Types.Values.Contains(t));
+
+                var match = NamespaceVersionRegex.Match(namespaceKey.Key.XmlSchemaNamespace);
+                if (match.Success)
+                {
+                    var version = match.Groups[1].Value.Replace(".", "_");
+                    t.Name = $"{t.Name}_{version}";
+                }
             }
         }
     }
@@ -1107,12 +1116,12 @@ internal class ModelBuilder
     public static List<DocumentationModel> GetDocumentation(XmlSchemaAnnotated annotated)
     {
         return annotated.Annotation == null ? []
-		        : annotated.Annotation.Items.OfType<XmlSchemaDocumentation>()
-		        .Where(d => d.Markup?.Length > 0)
-		        .Select(d => d.Markup.Select(m => new DocumentationModel { Language = d.Language, Text = m.OuterXml }))
-		        .SelectMany(d => d)
-		        .Where(d => !string.IsNullOrEmpty(d.Text))
-		        .ToList();
+                : annotated.Annotation.Items.OfType<XmlSchemaDocumentation>()
+                .Where(d => d.Markup?.Length > 0)
+                .Select(d => d.Markup.Select(m => new DocumentationModel { Language = d.Language, Text = m.OuterXml }))
+                .SelectMany(d => d)
+                .Where(d => !string.IsNullOrEmpty(d.Text))
+                .ToList();
     }
 
     public IEnumerable<CodeNamespace> GenerateCode()
