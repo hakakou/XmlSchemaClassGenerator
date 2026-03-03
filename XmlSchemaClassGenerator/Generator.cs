@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.CodeDom;
 using System.Collections.Generic;
 using System.IO;
@@ -9,41 +9,6 @@ using System.Xml.Schema;
 
 namespace XmlSchemaClassGenerator;
 
-public class NormalizingXmlResolver(string forceUriScheme) : XmlUrlResolver()
-{
-    // the Uri scheme to force on the resolved Uris
-    // "none" - do not change Uri scheme
-    // "same" - force the same Uri scheme as base Uri
-    // any other string becomes the new Uri scheme of the baseUri
-    private readonly string forceUriScheme = forceUriScheme;
-
-    public override Uri ResolveUri(Uri baseUri, string relativeUri)
-    {
-        var resolvedUri = base.ResolveUri(baseUri, relativeUri);
-        var r = NormalizeUri(baseUri, resolvedUri);
-        return r;
-    }
-
-    private Uri NormalizeUri(Uri baseUri, Uri resolvedUri)
-    {
-        var newScheme = forceUriScheme;
-
-        switch (forceUriScheme)
-        {
-            case "none": return resolvedUri;
-            case "same":
-            {
-                newScheme = baseUri.Scheme;
-                break;
-            }
-        }
-
-        var builder = new UriBuilder(resolvedUri) { Scheme = newScheme, Port = -1 };
-
-        return builder.Uri;
-    }
-}
-
 public class Generator
 {
     private readonly GeneratorConfiguration _configuration = new();
@@ -53,7 +18,7 @@ public class Generator
     public string ForceUriScheme
     {
         get { return _configuration.ForceUriScheme; }
-        set { _configuration.ForceUriScheme = value;  }
+        set { _configuration.ForceUriScheme = value; }
     }
 
     public NamespaceProvider NamespaceProvider
@@ -228,6 +193,12 @@ public class Generator
         set { _configuration.DateTimeWithTimeZone = value; }
     }
 
+    public bool UseDateOnly
+    {
+        get { return _configuration.UseDateOnly; }
+        set { _configuration.UseDateOnly = value; }
+    }
+
     public bool EntityFramework
     {
         get { return _configuration.EntityFramework; }
@@ -356,7 +327,7 @@ public class Generator
     public bool UseArrayItemAttribute
     {
         get { return _configuration.UseArrayItemAttribute; }
-        set {  _configuration.UseArrayItemAttribute = value;}
+        set { _configuration.UseArrayItemAttribute = value; }
     }
 
     public bool GenerateCommandLineArgumentsComment
@@ -399,6 +370,30 @@ public class Generator
     {
         get { return _configuration.OmitXmlIncludeAttribute; }
         set { _configuration.OmitXmlIncludeAttribute = value; }
+    }
+
+    public bool EnumCollection
+    {
+        get { return _configuration.EnumCollection; }
+        set { _configuration.EnumCollection = value; }
+    }
+
+    /// <summary>
+    /// Determines whether metadata helper attributes are emitted.
+    /// </summary>
+    public bool EmitMetadataAttributes
+    {
+        get { return _configuration.EmitMetadataAttributes; }
+        set { _configuration.EmitMetadataAttributes = value; }
+    }
+
+    /// <summary>
+    /// Namespace where generated metadata helper attributes are emitted.
+    /// </summary>
+    public string MetadataNamespace
+    {
+        get { return _configuration.MetadataNamespace; }
+        set { _configuration.MetadataNamespace = value; }
     }
 
     public bool ValidationError { get; private set; }

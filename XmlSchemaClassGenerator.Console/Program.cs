@@ -1,4 +1,4 @@
-﻿using XmlSchemaClassGenerator;
+using XmlSchemaClassGenerator;
 using XmlSchemaClassGenerator.NamingProviders;
 using System;
 using System.CodeDom;
@@ -24,6 +24,7 @@ static class Program
         var nameSubstitutes = new List<string>();
         var outputFolder = (string)null;
         bool dateTimeWithTimeZone = false;
+        bool useDateOnly = false;
         Type integerType = null;
         var useIntegerTypeAsFallback = false;
         var namespacePrefix = "";
@@ -69,8 +70,11 @@ static class Program
         var serializeEmptyCollections = false;
         var allowDtdParse = false;
         var omitXmlIncludeAttribute = false;
+        var enumCollection = false;
         NamingScheme? namingScheme = null;
         var forceUriScheme = "none";
+        var emitMetadataAttributes = false;
+        var metadataNamespace = GeneratorConfiguration.DefaultMetadataNamespace;
 
 
         var options = new OptionSet {
@@ -93,6 +97,7 @@ The line format is one mapping per line: prefixed type/member name = substitute 
 Lines starting with # and empty lines are ignored.", v => nameSubstituteFiles.Add(v) },
             { "o|output=", "the {FOLDER} to write the resulting .cs files to", v => outputFolder = v },
             { "d|datetime-offset", "map xs:datetime and derived types to System.DateTimeOffset instead of System.DateTime", v => dateTimeWithTimeZone = v != null },
+            { "do|dateOnly", "map xs:date to System.DateOnly and xs:time to System.TimeOnly", v => useDateOnly = v != null },
             { "i|integer=", @"map xs:integer and derived types to {TYPE} instead of automatic approximation
 {TYPE} can be i[nt], l[ong], or d[ecimal]", v => {
                                      switch (v)
@@ -156,7 +161,7 @@ with or without backing field initialization for collections
             { "dnfin|doNotForceIsNullable", "do not force generator to emit IsNullable = true in XmlElement annotation for nillable elements when element is nullable (minOccurs < 1 or parent element is choice) (default is false)", v => doNotForceIsNullable = v != null },
             { "cn|compactTypeNames", "use type names without namespace qualifier for types in the using list (default is false)", v => compactTypeNames = v != null },
             { "cl|commentLanguages=", $"comment languages to use (default is {string.Join(", ", commentLanguages)}; supported are {string.Join(", ", supportedCommentLanguages)})",
-                v => commentLanguages = v.Split(',').Select(l => l.Trim()).ToArray() },
+                v => commentLanguages = [.. v.Split(',').Select(l => l.Trim())] },
             { "un|uniqueTypeNames", "generate type names that are unique across namespaces (default is false)", v => uniqueTypeNamesAcrossNamespaces = v != null },
             { "gc|generatedCodeAttribute", "add version information to GeneratedCodeAttribute (default is true)", v => createGeneratedCodeAttributeVersion = v != null },
             { "nc|netCore", "generate .NET Core specific code that might not work with .NET Framework (default is false)", v => netCoreSpecificCode = v != null },
@@ -169,6 +174,7 @@ with or without backing field initialization for collections
             { "ec|serializeEmptyCollections", "serialize empty collections (default is false)", v => serializeEmptyCollections = v != null },
             { "dtd|allowDtdParse", "allows dtd parse (default is false)", v => allowDtdParse = v != null },
             { "oxi|omitXmlIncludeAttribute", "omit generation of XmlIncludeAttribute for derived types (default is false)", v => omitXmlIncludeAttribute = v != null },
+            { "ecl|enumCollection", "generate typed enum collections for xs:list types instead of string collections (default is false)", v => enumCollection = v != null },
             { "ns|namingScheme=", @"use the specified naming scheme for class and property names (default is Pascal; can be: Direct, Pascal, Legacy)",
                 v =>
                 {
@@ -181,7 +187,9 @@ with or without backing field initialization for collections
                     };
                 }
             },
-            { "fu|forceUriScheme=", "force URI scheme when resolving URLs (default is none; can be: none, same, or any defined value for scheme, like https or http)", v => forceUriScheme = v }
+            { "fu|forceUriScheme=", "force URI scheme when resolving URLs (default is none; can be: none, same, or any defined value for scheme, like https or http)", v => forceUriScheme = v },
+            { "ema|emitMetadataAttributes", "emit metadata helper attributes (default is false)", v => emitMetadataAttributes = v != null },
+            { "mn|metadataNamespace=", $"namespace for generated metadata helper attributes (default is {GeneratorConfiguration.DefaultMetadataNamespace})", v => metadataNamespace = v }
         };
 
         var globsAndUris = options.Parse(args);
@@ -238,6 +246,7 @@ with or without backing field initialization for collections
             IntegerDataType = integerType,
             UseIntegerDataTypeAsFallback = useIntegerTypeAsFallback,
             DateTimeWithTimeZone = dateTimeWithTimeZone,
+            UseDateOnly = useDateOnly,
             EntityFramework = entityFramework,
             GenerateInterfaces = interfaces,
             AssemblyVisible = assembly,
@@ -270,7 +279,10 @@ with or without backing field initialization for collections
             SerializeEmptyCollections = serializeEmptyCollections,
             AllowDtdParse = allowDtdParse,
             OmitXmlIncludeAttribute = omitXmlIncludeAttribute,
-            ForceUriScheme = forceUriScheme
+            EnumCollection = enumCollection,
+            ForceUriScheme = forceUriScheme,
+            EmitMetadataAttributes = emitMetadataAttributes,
+            MetadataNamespace = metadataNamespace
         };
 
         if (namingScheme != null)

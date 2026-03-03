@@ -2,11 +2,12 @@
 using System.CodeDom;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using System.Xml.Schema;
-using System.Text.RegularExpressions;
 using System.Xml.Serialization;
+using XmlSchemaClassGenerator.Metadata;
 
 namespace XmlSchemaClassGenerator;
 
@@ -484,8 +485,7 @@ internal class ModelBuilder
 
             interfaceModel.Documentation.AddRange(docs);
 
-            if (namespaceModel != null)
-                namespaceModel.Types[name] = interfaceModel;
+            namespaceModel?.Types[name] = interfaceModel;
 
             if (!qualifiedName.IsEmpty)
                 builder.SetType(group, qualifiedName, interfaceModel);
@@ -542,8 +542,7 @@ internal class ModelBuilder
 
             classModel.Documentation.AddRange(docs);
 
-            if (namespaceModel != null)
-                namespaceModel.Types[classModel.Name] = classModel;
+            namespaceModel?.Types[classModel.Name] = classModel;
 
             if (!qualifiedName.IsEmpty)
                 builder.SetType(complexType, qualifiedName, classModel);
@@ -557,6 +556,15 @@ internal class ModelBuilder
                     baseClassModel.DerivedTypes.Add(classModel);
                     if (classModel.AllBaseTypes.Any(b => b.XmlSchemaType.QualifiedName == qualifiedName))
                         classModel.Name += "Redefinition";
+                }
+            }
+
+            if (complexType.ContentModel?.Content is XmlSchemaSimpleContentRestriction simpleContentRestriction)
+            {
+                var enumFacets = simpleContentRestriction.Facets?.OfType<XmlSchemaEnumerationFacet>().ToList();
+                if (enumFacets?.Count > 0 && !_configuration.EnumAsString)
+                {
+                    classModel.TextValueType = CreateSimpleContentEnumModel(classModel, enumFacets);
                 }
             }
 
@@ -669,8 +677,8 @@ internal class ModelBuilder
 
             var facets = simpleType.Content switch
             {
-                XmlSchemaSimpleTypeRestriction typeRestriction when !_configuration.MergeRestrictionsWithBase => typeRestriction.Facets.Cast<XmlSchemaFacet>().ToList(),
-                XmlSchemaSimpleTypeUnion typeUnion when AllMembersHaveFacets(typeUnion, out baseFacets) => baseFacets.SelectMany(f => f).ToList(),
+                XmlSchemaSimpleTypeRestriction typeRestriction when !_configuration.MergeRestrictionsWithBase => [.. typeRestriction.Facets.Cast<XmlSchemaFacet>()],
+                XmlSchemaSimpleTypeUnion typeUnion when AllMembersHaveFacets(typeUnion, out baseFacets) => [.. baseFacets.SelectMany(f => f)],
                 _ => MergeRestrictions(simpleType)
             };
 
@@ -683,16 +691,37 @@ internal class ModelBuilder
                 if (enumFacets.Count > 0 && (baseFacets is null || baseFacets.TrueForAll(fs => fs.OfType<XmlSchemaEnumerationFacet>().Any())) && !_configuration.EnumAsString)
                     return CreateEnumModel(simpleType, enumFacets);
 
-                restrictions = CodeUtilities.GetRestrictions(facets, simpleType, _configuration).Where(r => r != null).Sanitize().ToList();
+                restrictions = [.. CodeUtilities.GetRestrictions(facets, simpleType, _configuration).Where(r => r != null).Sanitize()];
             }
 
-            return CreateSimpleModel(simpleType, restrictions ?? []);
+            if (!_configuration.EnumCollection || simpleType.Datatype?.Variety != XmlSchemaDatatypeVariety.List)
+            {
+                return CreateSimpleModel(simpleType, restrictions ?? [], null);
+            }
+
+            // get the list's item type if the simpleType is a list
+            var listItemType = FindListItemType(simpleType);
+            if (listItemType == null)
+            {
+                return CreateSimpleModel(simpleType, restrictions ?? [], null);
+            }
+
+            // if EnumCollection flag is enabled and the simpleType is a list, check if the item type is an enum and
+            // set the model's ListItemType to that enum, so that the generated collection can be of the enum type instead of string
+            TypeModel enumListItemTypeModel = null;
+            var itemTypeModel = builder.CreateTypeModel(listItemType.QualifiedName, listItemType);
+            if (itemTypeModel is EnumModel)
+            {
+                enumListItemTypeModel = itemTypeModel;
+            }
+
+            return CreateSimpleModel(simpleType, restrictions ?? [], enumListItemTypeModel);
 
             static bool AllMembersHaveFacets(XmlSchemaSimpleTypeUnion typeUnion, out List<IEnumerable<XmlSchemaFacet>> baseFacets)
             {
                 var members = typeUnion.BaseMemberTypes.Select(b => b.Content as XmlSchemaSimpleTypeRestriction);
                 var retval = members.All(r => r?.Facets.Count > 0);
-                baseFacets = !retval ? null : members.Select(r => r.Facets.Cast<XmlSchemaFacet>()).ToList();
+                baseFacets = !retval ? null : [.. members.Select(r => r.Facets.Cast<XmlSchemaFacet>())];
                 return retval;
             }
 
@@ -732,6 +761,48 @@ internal class ModelBuilder
             return enumModelValues;
         }
 
+        private EnumModel CreateSimpleContentEnumModel(ClassModel classModel, List<XmlSchemaEnumerationFacet> enumFacets)
+        {
+            var enumNamespace = namespaceModel?.Key.XmlSchemaNamespace ?? qualifiedName?.Namespace ?? "";
+            var enumQualifiedName = qualifiedName == null || qualifiedName.IsEmpty
+                ? new XmlQualifiedName($"{classModel.Name}Enum", enumNamespace)
+                : new XmlQualifiedName($"{qualifiedName.Name}Enum", enumNamespace);
+
+            var enumName = $"{classModel.Name}Enum";
+            if (namespaceModel != null)
+                enumName = namespaceModel.GetUniqueTypeName(enumName);
+
+            var enumModel = new EnumModel(_configuration)
+            {
+                Name = enumName,
+                Namespace = namespaceModel,
+                XmlSchemaName = enumQualifiedName,
+                IsAnonymous = false,
+            };
+
+            foreach (var facet in enumFacets.DistinctBy(f => f.Value))
+            {
+                var value = new EnumValueModel
+                {
+                    Name = _configuration.NamingProvider.EnumMemberNameFromValue(enumModel.Name, facet.Value, facet),
+                    Value = facet.Value
+                };
+
+                var valueDocs = GetDocumentation(facet);
+                value.Documentation.AddRange(valueDocs);
+
+                value.IsDeprecated = facet.Annotation?.Items.OfType<XmlSchemaAppInfo>()
+                    .Any(a => Array.Exists(a.Markup, m => m.Name == "annox:annotate" && m.HasChildNodes && m.FirstChild.Name == "jl:Deprecated")) == true;
+
+                enumModel.Values.Add(value);
+            }
+
+            enumModel.Values = EnsureEnumValuesUnique(enumModel.Values);
+            namespaceModel?.Types[enumModel.Name] = enumModel;
+
+            return enumModel;
+        }
+
         private EnumModel CreateEnumModel(XmlSchemaSimpleType simpleType, List<XmlSchemaEnumerationFacet> enumFacets)
         {
             // we got an enum
@@ -768,8 +839,7 @@ internal class ModelBuilder
             }
 
             enumModel.Values = EnsureEnumValuesUnique(enumModel.Values);
-            if (namespaceModel != null)
-                namespaceModel.Types[enumModel.Name] = enumModel;
+            namespaceModel?.Types[enumModel.Name] = enumModel;
 
             if (!qualifiedName.IsEmpty)
                 builder.SetType(simpleType, qualifiedName, enumModel);
@@ -777,7 +847,7 @@ internal class ModelBuilder
             return enumModel;
         }
 
-        private SimpleModel CreateSimpleModel(XmlSchemaSimpleType simpleType, List<RestrictionModel> restrictions)
+        private SimpleModel CreateSimpleModel(XmlSchemaSimpleType simpleType, List<RestrictionModel> restrictions, TypeModel enumListTypeModel)
         {
             var simpleModelName = _configuration.NamingProvider.SimpleTypeNameFromQualifiedName(qualifiedName, simpleType);
             if (namespaceModel != null)
@@ -790,13 +860,13 @@ internal class ModelBuilder
                 XmlSchemaName = qualifiedName,
                 XmlSchemaType = simpleType,
                 ValueType = simpleType.Datatype.GetEffectiveType(_configuration, restrictions, simpleType),
+                EnumListItemType = enumListTypeModel
             };
 
             simpleModel.Documentation.AddRange(docs);
             simpleModel.Restrictions.AddRange(restrictions);
 
-            if (namespaceModel != null)
-                namespaceModel.Types[simpleModel.Name] = simpleModel;
+            namespaceModel?.Types[simpleModel.Name] = simpleModel;
 
             if (!qualifiedName.IsEmpty)
                 builder.SetType(simpleType, qualifiedName, simpleModel);
@@ -1119,21 +1189,34 @@ internal class ModelBuilder
     public static List<DocumentationModel> GetDocumentation(XmlSchemaAnnotated annotated)
     {
         return annotated.Annotation == null ? []
-                : annotated.Annotation.Items.OfType<XmlSchemaDocumentation>()
-                .Where(d => d.Markup?.Length > 0)
-                .Select(d => d.Markup.Select(m => new DocumentationModel { Language = d.Language, Text = m.OuterXml }))
-                .SelectMany(d => d)
-                .Where(d => !string.IsNullOrEmpty(d.Text))
-                .ToList();
+                : [.. annotated.Annotation.Items.OfType<XmlSchemaDocumentation>()
+		        .Where(d => d.Markup?.Length > 0)
+		        .Select(d => d.Markup.Select(m => new DocumentationModel { Language = d.Language, Text = m.OuterXml }))
+		        .SelectMany(d => d)
+                .Where(d => !string.IsNullOrEmpty(d.Text))];
     }
 
     public IEnumerable<CodeNamespace> GenerateCode()
     {
         var hierarchy = NamespaceHierarchyItem.Build(Namespaces.Values.GroupBy(x => x.Name).SelectMany(x => x))
             .MarkAmbiguousNamespaceTypes();
-        return hierarchy.Flatten()
-            .Select(nhi => NamespaceModel.Generate(nhi.FullName, nhi.Models, _configuration));
+        var codeNamespaces = hierarchy.Flatten()
+            .Select(nhi => NamespaceModel.Generate(nhi.FullName, nhi.Models, _configuration))
+            .ToList();
+
+        if (HasSupportedFractionDigitsRestrictions())
+        {
+            var metadataHelperEmitter = new MetadataHelperEmitter(_configuration);
+            metadataHelperEmitter.EnsureFractionDigitsAttributeEmitted(codeNamespaces);
+        }
+
+        return codeNamespaces;
     }
+
+    private bool HasSupportedFractionDigitsRestrictions()
+        => Types.Values
+            .OfType<SimpleModel>()
+            .Any(model => model.Restrictions.OfType<FractionDigitsRestrictionModel>().Any(restriction => restriction.IsSupported));
 
     private string BuildNamespace(Uri source, string xmlNamespace)
     {
@@ -1141,5 +1224,46 @@ internal class ModelBuilder
         var result = _configuration.NamespaceProvider.FindNamespace(key);
         return !string.IsNullOrEmpty(result) ? result
             : throw new ArgumentException(string.Format("Namespace {0} not provided through map or generator.", xmlNamespace));
+    }
+
+    /// <summary>
+    /// <para>
+    /// Follows the <see cref="XmlSchemaSimpleType.BaseXmlSchemaType"/> chain to find the item type
+    /// of an <c>xs:list</c>. Returns <c>null</c> if no list content is found.
+    /// </para>
+    /// <para>
+    /// Direct — the simpleType's Content is the list itself, matched on the first iteration:
+    /// <code>
+    ///   &lt;xs:simpleType&gt;
+    ///     &lt;xs:list itemType="my:enumType" /&gt;
+    ///   &lt;/xs:simpleType&gt;
+    /// </code>
+    /// </para>
+    /// <para>
+    /// Wrapped — the simpleType's Content is a restriction.
+    /// The restriction's <see cref="XmlSchemaSimpleType.BaseXmlSchemaType"/> points to an
+    /// anonymous inner simpleType whose Content is the list, reached on the second iteration:
+    /// <code>
+    ///   &lt;xs:simpleType&gt;
+    ///     &lt;xs:restriction&gt;
+    ///       &lt;xs:simpleType&gt;&lt;xs:list itemType="my:enumType" /&gt;&lt;/xs:simpleType&gt;
+    ///       &lt;xs:minLength value="1" /&gt;
+    ///     &lt;/xs:restriction&gt;
+    ///   &lt;/xs:simpleType&gt;
+    /// </code>
+    /// </para>
+    /// </summary>
+    /// <param name="type">The simple type to inspect.</param>
+    /// <returns>The resolved item type of the list, or <c>null</c> if no list content was found.</returns>
+    private static XmlSchemaSimpleType FindListItemType(XmlSchemaSimpleType type)
+    {
+        for (var current = type; current != null; current = current.BaseXmlSchemaType as XmlSchemaSimpleType)
+        {
+            if (current.Content is XmlSchemaSimpleTypeList list)
+            {
+                return list.BaseItemType ?? list.ItemType;
+            }
+        }
+        return null;
     }
 }

@@ -59,7 +59,8 @@ public class XmlTests(ITestOutputHelper output)
             UseArrayItemAttribute = generatorPrototype.UseArrayItemAttribute,
             EnumAsString = generatorPrototype.EnumAsString,
             AllowDtdParse = generatorPrototype.AllowDtdParse,
-            OmitXmlIncludeAttribute = generatorPrototype.OmitXmlIncludeAttribute
+            OmitXmlIncludeAttribute = generatorPrototype.OmitXmlIncludeAttribute,
+            EnumCollection = generatorPrototype.EnumCollection,
         };
 
         gen.CommentLanguages.Clear();
@@ -214,6 +215,112 @@ public class XmlTests(ITestOutputHelper output)
         Assert.NotNull(num);
         Assert.Equal(typeof(decimal), num.PropertyType);
     }
+
+    [Fact, TestPriority(1)]
+    [UseCulture("en-US")]
+    public void TestSimpleContentEnum()
+    {
+        var assembly = Compiler.Generate("SimpleContentEnum", "xsd/simple/simplecontent-enum.xsd");
+
+        const string ns = "SimpleContentEnum.Simplecontent";
+
+        // The enum type should be generated
+        var enumType = assembly.GetType($"{ns}.TransConfirmationCodeTypeEnum");
+        if (enumType == null)
+        {
+            var names = string.Join(", ", assembly.GetTypes().Select(t => t.FullName));
+            Assert.Fail($"Enum type not found. Available types: {names}");
+        }
+
+        // Verify it's an enum with the expected values
+        Assert.True(enumType.IsEnum);
+        var enumValues = Enum.GetNames(enumType);
+        Assert.Contains("Always", enumValues);
+        Assert.Contains("Never", enumValues);
+        Assert.Contains("OnError", enumValues);
+
+        // The derived class should exist and inherit from the base
+        var type = assembly.GetType($"{ns}.TransConfirmationCodeType");
+        Assert.NotNull(type);
+
+        var baseType = assembly.GetType($"{ns}.CodeType");
+        Assert.Equal(baseType, type.BaseType);
+
+        // The derived class inherits the string Value property from the base class
+        var valueProperty = type.GetProperty("Value");
+        Assert.NotNull(valueProperty);
+        Assert.Equal(typeof(string), valueProperty.PropertyType);
+
+        // The derived class should have an EnumValue adapter property
+        var enumValueProperty = type.GetProperty("EnumValue");
+        Assert.NotNull(enumValueProperty);
+        Assert.Equal(typeof(Nullable<>).MakeGenericType(enumType), enumValueProperty.PropertyType);
+
+        // Test that the EnumValue property works correctly
+        var instance = Activator.CreateInstance(type);
+        Assert.NotNull(instance);
+
+        // Set Value to a string and verify EnumValue returns the correct enum
+        valueProperty.SetValue(instance, "Always");
+        var enumValue = enumValueProperty.GetValue(instance);
+        Assert.NotNull(enumValue);
+        Assert.Equal("Always", enumValue.ToString());
+
+        // Set EnumValue and verify Value is updated
+        var alwaysValue = Enum.Parse(enumType, "Never");
+        enumValueProperty.SetValue(instance, alwaysValue);
+        var stringValue = valueProperty.GetValue(instance);
+        Assert.Equal("Never", stringValue);
+
+        // Set EnumValue to null and verify Value is null
+        enumValueProperty.SetValue(instance, null);
+        stringValue = valueProperty.GetValue(instance);
+        Assert.Null(stringValue);
+    }
+
+     /// <summary>
+    /// Verifies that the EnumValue property is generated with the generic Enum.TryParse<> form,
+    /// which is compatible with net48/netstandard2.0.
+    /// The non-generic overload Enum.TryParse(Type, string, bool, out object) is .NET 5+ only.
+    /// Regression guard: generator must never emit the typeof(T) form.
+    /// </summary>
+    [Fact, TestPriority(1)]
+    [UseCulture("en-US")]
+    public void TestSimpleContentEnum_EnumValueUsesGenericTryParse()
+    {
+        var writer = new MemoryOutputWriter();
+        var gen = new Generator { OutputWriter = writer };
+        gen.Generate(["xsd/simple/simplecontent-enum.xsd"]);
+
+        const string expectedEnumValueProperty = @"
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public virtual System.Nullable<TransConfirmationCodeTypeEnum> EnumValue
+        {
+            get
+            {
+                TransConfirmationCodeTypeEnum result;
+                if (System.Enum.TryParse<TransConfirmationCodeTypeEnum>(this.Value, true, out result))
+                {
+                    return result;
+                }
+                return null;
+            }
+            set
+            {
+                if ((value != null))
+                {
+                    this.Value = value.ToString();
+                }
+                else
+                {
+                    this.Value = null;
+                }
+            }
+        }";
+
+        Assert.Contains(expectedEnumValueProperty, writer.Content.First());
+    }
+
 
     [Fact, TestPriority(1)]
     [UseCulture("en-US")]
@@ -452,6 +559,112 @@ public class XmlTests(ITestOutputHelper output)
         foreach (var propertyInfo in propertiesWithSpecifiedPostfix)
         {
             Assert.True((bool)propertyInfo.GetValue(myClassInstance));
+        }
+    }
+
+    [Fact]
+    public void TestEnumCollection()
+    {
+        var assembly = Compiler.Generate("ListEnumCollection", ListPattern, new Generator
+        {
+            GenerateNullables = true,
+            IntegerDataType = typeof(int),
+            DataAnnotationMode = DataAnnotationMode.All,
+            GenerateDesignerCategoryAttribute = false,
+            GenerateComplexTypesForCollections = true,
+            EntityFramework = false,
+            GenerateInterfaces = true,
+            NamespacePrefix = "List",
+            GenerateDescriptionAttribute = true,
+            TextValuePropertyName = "Value",
+            EnumCollection = true
+        });
+
+        Assert.NotNull(assembly);
+
+        var myClassType = assembly.GetType("List.MyClass");
+        Assert.NotNull(myClassType);
+
+        var enumType = assembly.GetType("List.EnumType");
+        Assert.NotNull(enumType);
+        Assert.True(enumType.IsEnum);
+
+        // Element property: should be Collection<EnumType>, not Collection<string>
+        var enumElemProp = myClassType.GetProperty("EnumElem");
+        Assert.NotNull(enumElemProp);
+        Assert.True(enumElemProp.PropertyType.IsGenericType);
+        Assert.Equal(enumType, enumElemProp.PropertyType.GetGenericArguments()[0]);
+
+        // Attribute property: should use enum type, not string
+        var enumAttrProp = myClassType.GetProperty("EnumAttr");
+        Assert.NotNull(enumAttrProp);
+        if (enumAttrProp.PropertyType.IsArray)
+        {
+            Assert.Equal(enumType, enumAttrProp.PropertyType.GetElementType());
+        }
+        else if (enumAttrProp.PropertyType.IsGenericType)
+        {
+            Assert.Equal(enumType, enumAttrProp.PropertyType.GetGenericArguments()[0]);
+        }
+        else
+        {
+            Assert.Fail($"Expected array or generic collection, got {enumAttrProp.PropertyType}");
+        }
+
+        // Non-enum list properties should remain string-based
+        var timeListElemProp = myClassType.GetProperty("TimeListElem");
+        Assert.NotNull(timeListElemProp);
+        Assert.True(timeListElemProp.PropertyType.IsGenericType);
+        Assert.Equal(typeof(string), timeListElemProp.PropertyType.GetGenericArguments()[0]);
+    }
+
+    [Theory]
+    [InlineData(typeof(Collection<>), null)]
+    [InlineData(typeof(List<>), null)]
+    [InlineData(typeof(HashSet<>), null)]
+    [InlineData(typeof(Array), null)]
+    public void TestEnumCollectionRespectsCollectionType(Type collectionType, Type collectionImplementationType)
+    {
+        var assembly = Compiler.Generate($"ListEnumCollection_{collectionType.Name}_{collectionImplementationType?.Name}", ListPattern, new Generator
+        {
+            GenerateNullables = true,
+            IntegerDataType = typeof(int),
+            DataAnnotationMode = DataAnnotationMode.All,
+            GenerateDesignerCategoryAttribute = false,
+            GenerateComplexTypesForCollections = true,
+            EntityFramework = false,
+            GenerateInterfaces = true,
+            NamespacePrefix = "List",
+            GenerateDescriptionAttribute = true,
+            TextValuePropertyName = "Value",
+            EnumCollection = true,
+            CollectionType = collectionType,
+            CollectionImplementationType = collectionImplementationType
+        });
+
+        Assert.NotNull(assembly);
+
+        var myClassType = assembly.GetType("List.MyClass");
+        Assert.NotNull(myClassType);
+
+        var enumType = assembly.GetType("List.EnumType");
+        Assert.NotNull(enumType);
+
+        var enumElemProp = myClassType.GetProperty("EnumElem");
+        Assert.NotNull(enumElemProp);
+
+        if (collectionType == typeof(System.Array))
+        {
+            Assert.True(enumElemProp.PropertyType.IsArray);
+            Assert.Equal(enumType, enumElemProp.PropertyType.GetElementType());
+        }
+        else
+        {
+            Assert.True(enumElemProp.PropertyType.IsGenericType);
+            Assert.Equal(enumType, enumElemProp.PropertyType.GetGenericArguments()[0]);
+
+            var expectedCollectionType = collectionType.MakeGenericType(enumType);
+            Assert.Equal(expectedCollectionType, enumElemProp.PropertyType);
         }
     }
 

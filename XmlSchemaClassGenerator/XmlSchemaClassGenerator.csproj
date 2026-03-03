@@ -7,7 +7,7 @@
     <AppVeyor_Build_Version Condition="'$(APPVEYOR_BUILD_VERSION)' == ''">1.0.0</AppVeyor_Build_Version>
     <AssemblyVersion>2.0.0.0</AssemblyVersion>
     <FileVersion>$(AppVeyor_Build_Version).0</FileVersion>
-    <PackageVersion>3.1.0</PackageVersion>
+    <PackageVersion>3.1.1234</PackageVersion>
     <Authors>Michael Ganss</Authors>
     <TargetFrameworks>netstandard2.0;net462</TargetFrameworks>
     <AssemblyName>XmlSchemaClassGenerator</AssemblyName>

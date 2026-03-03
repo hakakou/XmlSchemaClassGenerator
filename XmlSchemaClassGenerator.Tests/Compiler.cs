@@ -120,6 +120,7 @@ class Compiler
             MapUnionToWidestCommonType = generatorPrototype.MapUnionToWidestCommonType,
             SeparateNamespaceHierarchy = generatorPrototype.SeparateNamespaceHierarchy,
             OmitXmlIncludeAttribute = generatorPrototype.OmitXmlIncludeAttribute,
+            EnumCollection = generatorPrototype.EnumCollection,
         };
 
         gen.CommentLanguages.Clear();
@@ -134,7 +135,7 @@ class Compiler
 
     public static Assembly CompileFiles(string name, IEnumerable<string> files)
     {
-        return Compile(name, files.Select(f => File.ReadAllText(f)).ToArray());
+        return Compile(name, [.. files.Select(f => File.ReadAllText(f))]);
     }
 
     private static readonly LanguageVersion MaxLanguageVersion = Enum

@@ -18,6 +18,7 @@ Features
 * Generate C# XML comments from schema annotations
 * Generate [DataAnnotations](http://msdn.microsoft.com/en-us/library/system.componentmodel.dataannotations.aspx) attributes 
 from schema restrictions
+* Generate custom attributes for schema restrictions that aren't covered by standard DataAnnotations (see [below](#restriction-attributes))
 * Use [`Collection<T>`](http://msdn.microsoft.com/en-us/library/ms132397.aspx) properties 
 (initialized in constructor and with private setter)
 * Map xs:integer and derived types to the closest possible .NET type, if not possible - fall back to string. Can be overriden by explicitly defined type (int, long, or decimal)
@@ -90,8 +91,10 @@ Options:
                                Lines starting with # and empty lines are
                                ignored.
   -o, --output=FOLDER        the FOLDER to write the resulting .cs files to
-  -d, --datetime-offset      map xs:datetime and derived types to System.
-                               DateTimeOffset instead of System.DateTime
+  -d, --datetime-offset      map xs:datetime, xs:date and xs:time to System.
+                                DateTimeOffset instead of System.DateTime
+      --do, --dateOnly       map xs:date and xs:time to System.DateOnly and
+                                System.TimeOnly instead of System.DateTime
   -i, --integer=TYPE         map xs:integer and derived types to TYPE instead
                                of automatic approximation
                                TYPE can be i[nt], l[ong], or d[ecimal]
@@ -198,13 +201,21 @@ Options:
       --oxi, --omitXmlIncludeAttribute
                              omit generation of XmlIncludeAttribute for derived
                                types (default is false)
-	  --ns, --namingScheme   use the specified naming scheme for class and
+      --ecl, --enumCollection
+                             generate typed enum collections for xs:list types
+                             instead of string collections (default is false)
+      --ns, --namingScheme   use the specified naming scheme for class and
                                property names (default is Pascal; can be:
                                Direct, Pascal, Legacy)
       --fu, --forceUriScheme=VALUE
                              force URI scheme when resolving URLs (default is
                                none; can be: none, same, or any defined value
                                for scheme, like https or http)
+      --ema, --emitMetadataAttributes
+                             emit metadata helper attributes (default is false)
+      --mn, --metadataNamespace=VALUE
+                             namespace for generated metadata helper attributes (
+                               default is XmlSchemaClassGenerator.Metadata)
 </pre>
 
 For use from code use the [library NuGet package](https://www.nuget.org/packages/XmlSchemaClassGenerator-beta/):
@@ -231,7 +242,7 @@ Specifying the `NamespaceProvider` is optional. If you don't provide one, C# nam
 var generator = new Generator
 {
     NamespaceProvider = new NamespaceProvider
-    { 
+    {
         GenerateNamespace = key => ...
     }
 };
@@ -467,6 +478,13 @@ If you specify `--unionCommonType`, XmlSchemaClassGenerator will try to determin
 are all integer types, then the narrowest integer type will be used that can fit all member types.
 
 Note that semantic issues might arise with this approach. For example, `DateTime` values are serialized with both date and time information included. See discussion at [#397](https://github.com/mganss/XmlSchemaClassGenerator/issues/397).
+
+Restriction attributes
+----------------------
+
+When `EmitMetadataAttributes` is enabled, the generator emits custom attributes for XML schema restrictions that aren't covered by standard DataAnnotations. For example, `xs:fractionDigits` becomes `FractionDigitsAttribute`. 
+
+The attribute definition is automatically generated in the namespace specified through `--metadataNamespace`. If not specified, the default namespace is `XmlSchemaClassGenerator.Metadata`.
 
 Contributing
 ------------
