@@ -318,6 +318,25 @@ public class GeneratorConfiguration
     public bool UniqueTypeNameAcrossNamespaces { get; set; } = false;
 
     /// <summary>
+    /// Maps a namespace segment — the token immediately before the version, i.e. the
+    /// "second to last" segment of the XML namespace (e.g. "EngineeringDefinitions") — to a
+    /// short disambiguation label (e.g. "Engineering"). Used by CreateUniqueTypeNames together
+    /// with <see cref="DisambiguateTypeNames"/> so that equally-named types from different
+    /// namespaces that happen to share the same version segment (e.g. both ":v1.0") do not
+    /// collide once every namespace is mapped to a single C# namespace.
+    /// </summary>
+    public IDictionary<string, string> NamespaceDisambiguationMap { get; set; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Type names to which <see cref="NamespaceDisambiguationMap"/> is applied. When
+    /// CreateUniqueTypeNames processes a type whose name is in this set, the label looked up
+    /// from the type's namespace (second-to-last segment) is inserted before the version
+    /// suffix, e.g. "PredictiveCruiseControlType_Engineering_v1_0". Only relevant when
+    /// <see cref="UniqueTypeNameAcrossNamespaces"/> is enabled.
+    /// </summary>
+    public ICollection<string> DisambiguateTypeNames { get; set; } = new List<string>();
+
+    /// <summary>
     /// Adds version information to <see cref="System.CodeDom.Compiler.GeneratedCodeAttribute"/>. Default is true.
     /// </summary>
     public bool CreateGeneratedCodeAttributeVersion { get; set; } = true;

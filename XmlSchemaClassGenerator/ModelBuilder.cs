@@ -115,18 +115,44 @@ internal class ModelBuilder
 
     private void CreateUniqueTypeNames()
     {
-        foreach (var types in Namespaces.Values.SelectMany(n => n.Types.Values).GroupBy(t => t.Name))
+        // The version suffix and disambiguation label depend only on the namespace, so compute
+        // them once per namespace and walk each namespace's types in a single pass (a type already
+        // knows its namespace, so there is no need to group by name or search for the owner).
+        foreach (var namespaceModel in Namespaces.Values)
         {
-            foreach (var t in types)
-            {
-                var namespaceKey = Namespaces.First(n => n.Value.Types.Values.Contains(t));
+            var xmlns = namespaceModel.Key.XmlSchemaNamespace;
+            if (string.IsNullOrEmpty(xmlns))
+                continue;
 
-                var match = NamespaceVersionRegex.Match(namespaceKey.Key.XmlSchemaNamespace);
-                if (match.Success)
-                {
-                    var version = match.Groups[1].Value.Replace(".", "_");
+            // Label derived from the namespace's second-to-last segment (the token before the
+            // version, e.g. "EngineeringDefinitions"). Use the configured label when one is mapped,
+            // otherwise fall back to the segment itself so disambiguation always yields a unique
+            // name. Only applied to the configured DisambiguateTypeNames.
+            string label = null;
+            var segments = xmlns.Split(':', '/');
+            if (segments.Length >= 2)
+            {
+                var segment = segments[segments.Length - 2];
+                label = _configuration.NamespaceDisambiguationMap.TryGetValue(segment, out var mapped)
+                    ? mapped
+                    : null;
+            }
+
+            var versionMatch = NamespaceVersionRegex.Match(xmlns);
+            var version = versionMatch.Success ? versionMatch.Groups[1].Value.Replace(".", "_") : null;
+
+            if (label == null && version == null)
+                continue;
+
+            foreach (var t in namespaceModel.Types.Values)
+            {
+                // Disambiguates equally-named types from different namespaces that share the same
+                // version segment, which the version suffix alone cannot tell apart.
+                if (label != null && _configuration.DisambiguateTypeNames.Contains(t.Name))
+                    t.Name = $"{t.Name}_{label}";
+
+                if (version != null)
                     t.Name = $"{t.Name}_{version}";
-                }
             }
         }
     }

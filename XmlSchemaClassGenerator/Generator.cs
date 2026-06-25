@@ -312,6 +312,18 @@ public class Generator
         set { _configuration.UniqueTypeNameAcrossNamespaces = value; }
     }
 
+    public IDictionary<string, string> NamespaceDisambiguationMap
+    {
+        get { return _configuration.NamespaceDisambiguationMap; }
+        set { _configuration.NamespaceDisambiguationMap = value; }
+    }
+
+    public ICollection<string> DisambiguateTypeNames
+    {
+        get { return _configuration.DisambiguateTypeNames; }
+        set { _configuration.DisambiguateTypeNames = value; }
+    }
+
     public bool CreateGeneratedCodeAttributeVersion
     {
         get { return _configuration.CreateGeneratedCodeAttributeVersion; }
